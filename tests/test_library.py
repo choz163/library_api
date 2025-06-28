@@ -11,7 +11,17 @@ User = get_user_model()
 
 
 class BaseTestCase(APITestCase):
+    """
+    Базовый класс для всех тестов.
+    Создаёт суперпользователя (админа) и обычного пользователя перед каждым тестом,
+    а также выполняет логин под администратором.
+    """
     def setUp(self):
+        """
+        Выполняется перед каждым тестом:
+        - создание суперпользователя и логин под ним,
+        - создание обычного пользователя.
+        """
         # создаём администратора (is_staff=True)
         self.admin = User.objects.create_superuser("admin", password="pass")
         assert self.client.login(username="admin", password="pass")
@@ -20,17 +30,34 @@ class BaseTestCase(APITestCase):
 
 
 class AuthorTests(BaseTestCase):
+    """
+    Тесты для ViewSet и модели Author:
+    создание, просмотр (анонимный и аутентифицированный),
+    обновление, удаление, фильтрация, поиск и сортировка.
+    """
     def setUp(self):
+        """
+        Создаёт ещё одного обычного пользователя 'foo'
+        и аутентифицирует клиента под ним.
+        """
         User = get_user_model()
         self.user = User.objects.create_user("foo", "foo@bar.com", "secret")
         self.client.force_authenticate(user=self.user)
 
     def test_create_author(self):
+        """
+        Проверяет, что аутентифицированный пользователь
+        может создать нового автора через POST /author/.
+        """
         url = reverse("author-list")
         resp = self.client.post(url, {"name": "Tolstoy"})
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
 
     def test_list_and_retrieve_anonymous(self):
+        """
+        Проверяет, что анонимные пользователи могут просматривать
+        список авторов и получать детали конкретного автора.
+        """
         a1 = Author.objects.create(name="A1")
         a2 = Author.objects.create(name="A2")
         self.client.logout()
@@ -44,6 +71,10 @@ class AuthorTests(BaseTestCase):
         self.assertEqual(resp2.data["name"], "A1")
 
     def test_update_and_partial_delete(self):
+        """
+        Проверяет полное (PUT) и частичное (PATCH) обновление автора,
+        а также его удаление (DELETE).
+        """
         a = Author.objects.create(name="Original")
         # full update
         resp = self.client.put(
@@ -63,6 +94,12 @@ class AuthorTests(BaseTestCase):
         self.assertFalse(Author.objects.filter(id=a.id).exists())
 
     def test_filter_search_ordering(self):
+        """
+        Проверяет:
+        - фильтрацию по точному совпадению поля name,
+        - поиск по неполному совпадению (icontains),
+        - сортировку по полю name.
+        """
         Author.objects.bulk_create(
             [
                 Author(name="Leo"),
@@ -85,7 +122,16 @@ class AuthorTests(BaseTestCase):
 
 
 class BookTests(BaseTestCase):
+    """
+    Тесты для ViewSet и модели Book:
+    создание, просмотр (анонимный и аутентифицированный),
+    обновление, удаление, фильтрация, поиск и сортировка.
+    """
     def setUp(self):
+        """
+        Создаёт пользователя 'foo', аутентифицирует под ним,
+        и два автора self.a1, self.a2 для связки с книгами.
+        """
         User = get_user_model()
         self.user = User.objects.create_user("foo", "foo@bar.com", "secret")
         self.client.force_authenticate(user=self.user)
@@ -93,6 +139,9 @@ class BookTests(BaseTestCase):
         self.a2 = Author.objects.create(name="A2")
 
     def test_create_book(self):
+        """
+        Проверяет создание книги с указанием списка author_ids.
+        """
         url = reverse("book-list")
         data = {
             "title": "War and Peace",
@@ -108,6 +157,11 @@ class BookTests(BaseTestCase):
         self.assertEqual(list(b.authors.all()), [self.a1, self.a2])
 
     def test_list_and_retrieve_anonymous(self):
+        """
+        Проверяет, что аноним может:
+        - получить список книг,
+        - посмотреть детали конкретной книги.
+        """
         b = Book.objects.create(title="B1", genre="X", description="", available=True)
         b.authors.add(self.a1)
         self.client.logout()
@@ -120,6 +174,9 @@ class BookTests(BaseTestCase):
         self.assertEqual(resp2.data["genre"], "X")
 
     def test_update_and_delete_book(self):
+        """
+        Проверяет полное обновление книги (PUT) и её удаление (DELETE).
+        """
         b = Book.objects.create(title="Old", genre="G", description="D", available=True)
         b.authors.add(self.a1)
         url = reverse("book-detail", args=[b.id])
@@ -142,6 +199,12 @@ class BookTests(BaseTestCase):
         self.assertFalse(Book.objects.filter(id=b.id).exists())
 
     def test_filter_search_ordering(self):
+        """
+        Проверяет:
+        - фильтрацию по genre, available и author,
+        - поиск по title и genre,
+        - сортировку по title.
+        """
         # создаём 5 книг
         for i in range(5):
             bk = Book.objects.create(
@@ -176,15 +239,31 @@ class BookTests(BaseTestCase):
 
 
 class LoanTests(BaseTestCase):
+    """
+    Тесты для ViewSet и модели Loan:
+    создание займа, проверка недоступности книги,
+    просмотр списка и деталей займа, возврат книги,
+    права доступа пользователей и админа,
+    поиск и сортировка по дате займа.
+    """
     def setUp(self):
+        """
+        Создаёт одну книгу и связывает её с автором,
+        оставляя книгу доступной для займа.
+        """
         super().setUp()
-        # одна книга
         self.book = Book.objects.create(
             title="LoanMe", genre="G", description="", available=True
         )
         self.book.authors.add(Author.objects.create(name="Au"))
 
     def test_create_and_book_unavailability(self):
+        """
+        Проверяет:
+        - успешное создание займа под админом,
+        - перевод книги в unavailable,
+        - повторную попытку займа уже недоступной книги (400).
+        """
         url = reverse("loan-list")
         resp = self.client.post(url, {"book": self.book.id}, format="json")
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
@@ -197,6 +276,12 @@ class LoanTests(BaseTestCase):
         self.assertEqual(resp2.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_list_retrieve_and_return(self):
+        """
+        Проверяет:
+        - список и детали займа,
+        - статус займа до и после возврата,
+        - доступность книги после возврата через custom action.
+        """
         loan = Loan.objects.create(user=self.admin, book=self.book)
         # вручную сделать unavailable
         self.book.available = False
@@ -221,6 +306,10 @@ class LoanTests(BaseTestCase):
         self.assertTrue(self.book.available)
 
     def test_regular_user_sees_only_their_loans(self):
+        """
+        Проверяет, что обычный пользователь видит только свои займы,
+        а админ видит все.
+        """
         # создаём чужой займ
         other_loan = Loan.objects.create(user=self.admin, book=self.book)
         # у другой книги
@@ -240,6 +329,11 @@ class LoanTests(BaseTestCase):
         self.assertEqual(resp_user.data["results"][0]["user"], self.user.id)
 
     def test_search_and_ordering_loans(self):
+        """
+        Проверяет:
+        - поиск займов по названию книги,
+        - сортировку по дате займа (asc).
+        """
         # два займа с разным временем
         l1 = Loan.objects.create(user=self.user, book=self.book)
         # подлатать дату
